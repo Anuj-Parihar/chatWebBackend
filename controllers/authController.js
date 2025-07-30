@@ -1,163 +1,44 @@
-const User = require('../models/User');
-const config = require('../config/config');
-const { createToken } = require('../utils/auth');
+import User from "../models/User.js";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
-// Register a new user
-exports.register = async (req, res, next) => {
+export const register = async (req, res) => {
   try {
     const { username, password } = req.body;
+    const userExists = await User.findOne({ username });
+    if (userExists) return res.status(400).json({ message: "Username taken" });
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ username });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Username already exists'
-      });
-    }
-
-    // Create new user
-    const user = await User.create({
-      username,
-      password,
-      isGuest: false
-    });
-
-    // Generate token
-    const token = user.generateAuthToken();
-
-    // Set cookie
-    res.cookie('token', token, {
-      expires: new Date(Date.now() + config.cookieExpire * 24 * 60 * 60 * 1000),
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production'
-    });
-
-    res.status(201).json({
-      success: true,
-      data: {
-        id: user._id,
-        username: user.username,
-        isGuest: user.isGuest,
-        token
-      }
-    });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ username, password: hashed });
+    res.status(201).json({ message: "User registered", user });
   } catch (err) {
-    next(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
-// Login user
-exports.login = async (req, res, next) => {
+export const login = async (req, res) => {
   try {
     const { username, password } = req.body;
+    const user = await User.findOne({ username });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // Check if user exists
-    const user = await User.findOne({ username }).select('+password');
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
-    }
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-    // Check if password matches
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
-    }
-
-    // Generate token
-    const token = user.generateAuthToken();
-
-    // Set cookie
-    res.cookie('token', token, {
-      expires: new Date(Date.now() + config.cookieExpire * 24 * 60 * 60 * 1000),
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production'
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {
-        id: user._id,
-        username: user.username,
-        isGuest: user.isGuest,
-        token
-      }
-    });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+    res.json({ token, username: user.username });
   } catch (err) {
-    next(err);
+    res.status(500).json({ message: err.message });
   }
 };
 
-// Create guest user
-exports.guestLogin = async (req, res, next) => {
+export const guestLogin = async (req, res) => {
   try {
-    // Generate random username
-    const username = `Guest_${Math.floor(Math.random() * 10000)}`;
-    
-    // Create guest user
-    const user = await User.create({
-      username,
-      password: 'guest_password', // Not used for login
-      isGuest: true
-    });
-
-    // Generate token
-    const token = user.generateAuthToken();
-
-    // Set cookie
-    res.cookie('token', token, {
-      expires: new Date(Date.now() + config.cookieExpire * 24 * 60 * 60 * 1000),
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production'
-    });
-
-    res.status(201).json({
-      success: true,
-      data: {
-        id: user._id,
-        username: user.username,
-        isGuest: user.isGuest,
-        token
-      }
-    });
+    const guestName = "Guest_" + Math.floor(Math.random() * 10000);
+    const user = await User.create({ username: guestName, isGuest: true });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: "1d" });
+    res.json({ token, username: user.username });
   } catch (err) {
-    next(err);
-  }
-};
-
-// Logout user
-exports.logout = async (req, res, next) => {
-  try {
-    res.cookie('token', 'none', {
-      expires: new Date(Date.now() + 10 * 1000),
-      httpOnly: true
-    });
-
-    res.status(200).json({
-      success: true,
-      data: {}
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// Get current user
-exports.getMe = async (req, res, next) => {
-  try {
-    const user = await User.findById(req.user.id);
-
-    res.status(200).json({
-      success: true,
-      data: user
-    });
-  } catch (err) {
-    next(err);
+    res.status(500).json({ message: err.message });
   }
 };
